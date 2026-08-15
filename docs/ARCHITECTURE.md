@@ -31,7 +31,7 @@ Client        HTTP/API       Orchestrator       OpenAI        Product DB     Fin
 
 For complete supported requests, the second model call receives the backend result as a tool output. The system prompt prohibits recomputation or changed figures. The API also returns the structured backend calculation alongside prose, so consumers never need to parse the model's text.
 
-Every turn uses `tool_choice: required` and must select exactly one strict native function. Complete calculations select one of the two financial tools. Other turns select `respond_to_user` with a constrained category for greetings, capabilities, supported education, missing-parameter clarification, or out-of-scope input. Capability and out-of-scope text is owned by the backend; any model-drafted content for those categories is discarded. These turns are persisted as ordinary assistant messages and return `calculation: null`; they never create a calculation audit row. A numeric financial result still requires a financial tool and the verified formula path.
+Every turn uses `tool_choice: required` and must select exactly one strict native function. Complete calculations select one of the two financial tools. Other turns select `respond_to_user` with a constrained category for greetings, capabilities, formula questions, supported education, missing-parameter clarification, or out-of-scope input. Capability, formula, and out-of-scope text is owned by the backend; any model-drafted content for those categories is discarded. These turns are persisted as ordinary assistant messages and return `calculation: null`; they never create a calculation audit row. A numeric financial result still requires a financial tool and the verified formula path.
 
 ## Components
 

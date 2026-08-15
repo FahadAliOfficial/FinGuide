@@ -116,6 +116,29 @@ describe('OpenAI tool loop', () => {
     expect(result.explanation).not.toContain('I can do anything.');
   });
 
+  it('treats formula questions as supported and returns the backend-owned equations', async () => {
+    const create = vi.fn().mockResolvedValueOnce({
+      output: [{
+        type: 'function_call', call_id: 'call-5', name: 'respond_to_user',
+        arguments: '{"category":"FORMULAS","message":"I cannot help with that topic."}'
+      }],
+      output_text: ''
+    });
+    const client = { responses: { create } } as unknown as OpenAI;
+    const gateway = new OpenAiGateway('test-key', 'test-model', 1_000, 0, client);
+    const execute = vi.fn();
+
+    const result = await gateway.completeCalculation(
+      [{ role: 'USER', content: 'whats the formula you are using for its calculations?' }],
+      execute
+    );
+
+    expect(result.explanation).toContain('A = P(1 + r/n)^(nt)');
+    expect(result.explanation).toContain('M = P × i(1 + i)^N');
+    expect(result.explanation).not.toContain('cannot help');
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it('fails closed when the required native tool call is missing', async () => {
     const create = vi.fn().mockResolvedValueOnce({
       output: [{ type: 'message', role: 'assistant', content: [] }],

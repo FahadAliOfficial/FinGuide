@@ -116,12 +116,13 @@ Every turn uses `tool_choice: "required"`, `parallel_tool_calls: false`, and one
 ```text
 GREETING_OR_THANKS
 CAPABILITIES
+FORMULAS
 SUPPORTED_EDUCATION
 MISSING_PARAMETERS
 OUT_OF_SCOPE
 ```
 
-For `CAPABILITIES` and `OUT_OF_SCOPE`, model-written text is discarded. The backend substitutes a reviewed response, preventing an unrelated draft from reaching the user. If OpenAI returns no function call, multiple function calls, malformed arguments, or an empty reply, the gateway fails closed.
+For `CAPABILITIES`, `FORMULAS`, and `OUT_OF_SCOPE`, model-written text is discarded. The backend substitutes a reviewed response, preventing an unrelated or inaccurate draft from reaching the user. Formula questions—including ambiguous follow-ups such as “What formula are you using for its calculations?”—receive both exact equations and their variable definitions. If OpenAI returns no function call, multiple function calls, malformed arguments, or an empty reply, the gateway fails closed.
 
 For a completed calculation, the model's native function arguments are decoded and treated as untrusted input. The backend validates and executes them, then sends the verified result back as `function_call_output`. A second model call explains only that supplied result. The API also returns the calculation as a separate structured object, so the UI never needs to parse numeric truth from generated prose.
 
@@ -281,13 +282,13 @@ Latest verified quality baseline:
 |---|---:|
 | ESLint | Passed |
 | Strict TypeScript | Passed |
-| API tests | 24 passed |
+| API tests | 25 passed |
 | Web tests | 5 passed |
-| Total tests | 29 passed |
+| Total tests | 30 passed |
 | API production build | Passed |
 | Web production build | Passed |
 
-Tests cover formulas, numeric bounds, zero-interest loans, stored product grounding, unknown products, conflicting rate sources, native OpenAI tool orchestration, fail-closed behavior, SQL-scope leakage, HTTP validation/security headers, conversation persistence, assistant formatting, and UI session restoration.
+Tests cover formulas, numeric bounds, zero-interest loans, stored product grounding, unknown products, conflicting rate sources, native OpenAI tool orchestration, formula-question routing, fail-closed behavior, SQL-scope leakage, HTTP validation/security headers, conversation persistence, assistant formatting, and UI session restoration.
 
 ## Assumptions and limitations
 

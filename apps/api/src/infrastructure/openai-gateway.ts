@@ -7,7 +7,7 @@ import { toolNames } from '../application/tool-executor.js';
 
 const conversationalToolName = 'respond_to_user';
 const conversationalResponseSchema = z.object({
-  category: z.enum(['GREETING_OR_THANKS', 'CAPABILITIES', 'SUPPORTED_EDUCATION', 'MISSING_PARAMETERS', 'OUT_OF_SCOPE']),
+  category: z.enum(['GREETING_OR_THANKS', 'CAPABILITIES', 'FORMULAS', 'SUPPORTED_EDUCATION', 'MISSING_PARAMETERS', 'OUT_OF_SCOPE']),
   message: z.string().max(2_000)
 }).strict();
 
@@ -17,6 +17,22 @@ const capabilityReply = `I can help with two backend-verified financial calculat
 2. **Monthly loan payment** — payment from a principal, annual rate or stored loan product, and loan term.
 
 Try: “Calculate the monthly payment for a $300,000 Home Loan over 30 years using the stored rate.”`;
+
+const formulaReply = `FinGuide uses these backend-verified formulas:
+
+1. **Compound interest**
+
+   \`A = P(1 + r/n)^(nt)\`
+
+   \`P\` is the principal, \`r\` is the annual rate as a decimal, \`n\` is the number of compounding periods per year, and \`t\` is the duration in years.
+
+2. **Monthly loan payment**
+
+   \`M = P × i(1 + i)^N / ((1 + i)^N - 1)\`
+
+   \`P\` is the loan principal, \`i\` is the monthly interest rate, and \`N\` is the total number of monthly payments. For a 0% rate, the payment is \`P / N\`.
+
+All calculations run in backend code using Decimal.js and are rounded half-up to two decimal places.`;
 
 const outOfScopeReply = `I’m focused on compound-interest and monthly loan-payment calculations, so I can’t help with that topic.
 
@@ -68,12 +84,12 @@ const tools: Tool[] = [
       properties: {
         category: {
           type: 'string',
-          enum: ['GREETING_OR_THANKS', 'CAPABILITIES', 'SUPPORTED_EDUCATION', 'MISSING_PARAMETERS', 'OUT_OF_SCOPE'],
+          enum: ['GREETING_OR_THANKS', 'CAPABILITIES', 'FORMULAS', 'SUPPORTED_EDUCATION', 'MISSING_PARAMETERS', 'OUT_OF_SCOPE'],
           description: 'Why no financial calculation should run'
         },
         message: {
           type: 'string',
-          description: 'A concise reply. For OUT_OF_SCOPE and CAPABILITIES this value is ignored and replaced by a backend-owned response.'
+          description: 'A concise reply. For OUT_OF_SCOPE, CAPABILITIES, and FORMULAS this value is ignored and replaced by a backend-owned response.'
         }
       },
       required: ['category', 'message']
@@ -89,6 +105,7 @@ Use respond_to_user for greetings, thanks, capability questions, supported finan
 When values are missing, use category MISSING_PARAMETERS and ask only for the missing information.
 Use category OUT_OF_SCOPE for every request that is not directly about compound interest or monthly amortized loan payments. This includes programming, SQL, SQL injection, cybersecurity, code, medical, legal, politics, general knowledge, and unrelated financial advice. Do not answer or explain the requested topic; the backend will provide the scope response.
 For capability questions, use category CAPABILITIES; the backend will provide the supported feature list.
+For questions about formulas, equations, calculation methods, or how a result was calculated, use category FORMULAS; the backend will provide the exact formulas. Examples include “What formulas do you use?”, “What’s the formula you are using for its calculations?”, and “How did you calculate that result?”.
 Never calculate or state a numeric financial result yourself.
 Extract only values the user supplied, except compound frequency defaults to annual (1).
 For a named product request, set annualRate to null and preserve the product name. For an explicit rate, set productName to null.
@@ -145,7 +162,9 @@ export class OpenAiGateway implements LlmGateway {
           ? outOfScopeReply
           : parsed.data.category === 'CAPABILITIES'
             ? capabilityReply
-            : parsed.data.message.trim();
+            : parsed.data.category === 'FORMULAS'
+              ? formulaReply
+              : parsed.data.message.trim();
         if (!reply) throw new UpstreamError('The AI service returned an empty response.');
         return { kind: 'conversation', explanation: reply, calculation: null };
       }
