@@ -1,0 +1,81 @@
+import type {
+  ChatHistoryItem,
+  ConversationRepository,
+  LlmGateway,
+  ModelToolCall,
+  ProductRepository,
+  StoredMessage,
+  VerifiedCalculation
+} from '../application/ports.js';
+import type { ConversationSummary } from '@finguide/contracts';
+import { NotFoundError } from '../domain/errors.js';
+
+export const fakeProducts: ProductRepository = {
+  findActiveByName: async (name) => name.toLowerCase() === 'home loan'
+    ? { id: 'product-1', name: 'Home Loan', type: 'LOAN', annualInterestRate: '6.5' }
+    : null
+};
+
+export class InMemoryConversations implements ConversationRepository {
+  private sequence = 0;
+  readonly records = new Map<string, StoredMessage[]>();
+
+  async resolveConversation(requestedId?: string): Promise<string> {
+    if (requestedId && !this.records.has(requestedId)) throw new NotFoundError('Conversation not found.');
+    const id = requestedId ?? 'cmockconversation00001';
+    if (!this.records.has(id)) this.records.set(id, []);
+    return id;
+  }
+  async appendUserMessage(id: string, content: string): Promise<void> { this.add(id, 'USER', content, null); }
+  async recentMessages(id: string, limit: number): Promise<ChatHistoryItem[]> {
+    return (this.records.get(id) ?? []).slice(-limit).map(({ role, content }) => ({ role, content }));
+  }
+  async appendAssistantResult(id: string, content: string, value: VerifiedCalculation): Promise<{ id: string; createdAt: Date }> {
+    const calculation = {
+      type: value.type,
+      result: value.result,
+      unit: value.unit,
+      inputs: value.inputs,
+      product: value.product,
+      formulaVersion: value.formulaVersion
+    };
+    return this.add(id, 'ASSISTANT', content, calculation);
+  }
+  async appendAssistantMessage(id: string, content: string): Promise<{ id: string; createdAt: Date }> {
+    return this.add(id, 'ASSISTANT', content, null);
+  }
+  async appendAssistantError(id: string, content: string): Promise<void> { this.add(id, 'ASSISTANT', content, null); }
+  async getMessages(id: string): Promise<StoredMessage[]> {
+    const value = this.records.get(id);
+    if (!value) throw new NotFoundError('Conversation not found.');
+    return value;
+  }
+  async listConversations(limit: number): Promise<ConversationSummary[]> {
+    return [...this.records.entries()].map(([id, messages]) => ({
+      id,
+      title: messages.find((message) => message.role === 'USER')?.content ?? 'New conversation',
+      preview: messages.at(-1)?.content ?? '',
+      messageCount: messages.length,
+      updatedAt: messages.at(-1)?.createdAt.toISOString() ?? new Date('2026-08-15T00:00:00Z').toISOString()
+    })).slice(0, limit);
+  }
+  private add(id: string, role: 'USER' | 'ASSISTANT', content: string, calculation: StoredMessage['calculation']): StoredMessage {
+    const message = { id: `message-${++this.sequence}`, role, content, createdAt: new Date('2026-08-15T00:00:00Z'), calculation };
+    this.records.get(id)?.push(message);
+    return message;
+  }
+}
+
+export class FakeLlm implements LlmGateway {
+  constructor(private readonly call: ModelToolCall, private readonly explanation = 'The verified result is shown below. This is an estimate, not financial advice.') {}
+  async completeCalculation(_history: ChatHistoryItem[], execute: (call: ModelToolCall) => Promise<VerifiedCalculation>) {
+    return { kind: 'calculation' as const, explanation: this.explanation, calculation: await execute(this.call) };
+  }
+}
+
+export class FakeConversationalLlm implements LlmGateway {
+  constructor(private readonly reply: string) {}
+  async completeCalculation() {
+    return { kind: 'conversation' as const, explanation: this.reply, calculation: null };
+  }
+}
