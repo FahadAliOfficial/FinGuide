@@ -1,11 +1,14 @@
 import type {
   ChatHistoryItem,
+  CalculationSummaryScope,
   ConversationRepository,
   LlmGateway,
   ModelToolCall,
   ProductRepository,
   StoredMessage,
-  VerifiedCalculation
+  VerifiedCalculation,
+  VerifiedCalculationSummary,
+  VerifiedToolResult
 } from '../application/ports.js';
 import type { ConversationSummary } from '@finguide/contracts';
 import { NotFoundError } from '../domain/errors.js';
@@ -59,6 +62,15 @@ export class InMemoryConversations implements ConversationRepository {
       updatedAt: messages.at(-1)?.createdAt.toISOString() ?? new Date('2026-08-15T00:00:00Z').toISOString()
     })).slice(0, limit);
   }
+  async getCalculationSummary(id: string, scope: CalculationSummaryScope): Promise<VerifiedCalculationSummary> {
+    const messages = scope === 'CURRENT_CONVERSATION'
+      ? (this.records.get(id) ?? [])
+      : [...this.records.values()].flat();
+    const calculations = messages.flatMap((message) => message.calculation ? [message.calculation] : []);
+    const compoundInterest = calculations.filter((calculation) => calculation.type === 'COMPOUND_INTEREST').length;
+    const loanPayments = calculations.filter((calculation) => calculation.type === 'LOAN_PAYMENT').length;
+    return { kind: 'CALCULATION_SUMMARY', scope, total: calculations.length, compoundInterest, loanPayments };
+  }
   private add(id: string, role: 'USER' | 'ASSISTANT', content: string, calculation: StoredMessage['calculation']): StoredMessage {
     const message = { id: `message-${++this.sequence}`, role, content, createdAt: new Date('2026-08-15T00:00:00Z'), calculation };
     this.records.get(id)?.push(message);
@@ -68,8 +80,10 @@ export class InMemoryConversations implements ConversationRepository {
 
 export class FakeLlm implements LlmGateway {
   constructor(private readonly call: ModelToolCall, private readonly explanation = 'The verified result is shown below. This is an estimate, not financial advice.') {}
-  async completeCalculation(_history: ChatHistoryItem[], execute: (call: ModelToolCall) => Promise<VerifiedCalculation>) {
-    return { kind: 'calculation' as const, explanation: this.explanation, calculation: await execute(this.call) };
+  async completeCalculation(_history: ChatHistoryItem[], execute: (call: ModelToolCall) => Promise<VerifiedToolResult>) {
+    const result = await execute(this.call);
+    if ('kind' in result) throw new Error('FakeLlm expected a financial calculation');
+    return { kind: 'calculation' as const, explanation: this.explanation, calculation: result };
   }
 }
 
@@ -77,5 +91,21 @@ export class FakeConversationalLlm implements LlmGateway {
   constructor(private readonly reply: string) {}
   async completeCalculation() {
     return { kind: 'conversation' as const, explanation: this.reply, calculation: null };
+  }
+}
+
+export class FakeSummaryLlm implements LlmGateway {
+  constructor(private readonly scope: CalculationSummaryScope) {}
+  async completeCalculation(
+    _history: ChatHistoryItem[],
+    execute: (call: ModelToolCall) => Promise<VerifiedToolResult>
+  ) {
+    const result = await execute({ name: 'get_calculation_summary', arguments: { scope: this.scope } });
+    if (!('kind' in result)) throw new Error('FakeSummaryLlm expected a calculation summary');
+    return {
+      kind: 'conversation' as const,
+      explanation: `${result.total} total calculation(s): ${result.compoundInterest} compound interest and ${result.loanPayments} loan payment(s).`,
+      calculation: null
+    };
   }
 }

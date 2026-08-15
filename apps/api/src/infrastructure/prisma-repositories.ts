@@ -3,11 +3,13 @@ import type { CalculationResponse, ConversationSummary } from '@finguide/contrac
 import { NotFoundError } from '../domain/errors.js';
 import type {
   ChatHistoryItem,
+  CalculationSummaryScope,
   ConversationRepository,
   FinancialProductRecord,
   ProductRepository,
   StoredMessage,
-  VerifiedCalculation
+  VerifiedCalculation,
+  VerifiedCalculationSummary
 } from '../application/ports.js';
 
 const normalizeProductName = (name: string) => name.trim().replace(/\s+/g, ' ').toLocaleLowerCase('en-US');
@@ -131,6 +133,30 @@ export class PrismaConversationRepository implements ConversationRepository {
       messageCount: conversation._count.messages,
       updatedAt: conversation.lastMessageAt.toISOString()
     }));
+  }
+
+  async getCalculationSummary(
+    conversationId: string,
+    scope: CalculationSummaryScope
+  ): Promise<VerifiedCalculationSummary> {
+    const where = scope === 'CURRENT_CONVERSATION'
+      ? { message: { conversationId } }
+      : {};
+    const grouped = await this.prisma.calculation.groupBy({
+      by: ['type'],
+      where,
+      _count: { _all: true }
+    });
+    const count = (type: string) => grouped.find((row) => row.type === type)?._count._all ?? 0;
+    const compoundInterest = count('COMPOUND_INTEREST');
+    const loanPayments = count('LOAN_PAYMENT');
+    return {
+      kind: 'CALCULATION_SUMMARY',
+      scope,
+      total: compoundInterest + loanPayments,
+      compoundInterest,
+      loanPayments
+    };
   }
 
   async getMessages(conversationId: string): Promise<StoredMessage[]> {

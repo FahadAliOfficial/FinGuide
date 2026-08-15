@@ -12,6 +12,7 @@ AI-assisted financial calculations with a deliberately trusted backend boundary.
 - Compound-interest and monthly amortized-loan calculations using Decimal.js
 - Database-grounded product rates, including the seeded 6.5% `Home Loan`
 - Required scope classification for every conversational turn
+- Database-backed calculation totals for the current chat or all stored sessions
 - Deterministic redirects for SQL, programming, cybersecurity, and other unsupported topics
 - Calculation audit records with normalized inputs, formula versions, and product provenance
 - Production-aware API security, structured logging, Docker packaging, CI, and automated tests
@@ -23,25 +24,19 @@ React client -> POST /api/v1/chat -> Zod HTTP validation -> ChatService
                                                              |
                                                              v
                                                   OpenAI required tool choice
-                                                   /                   \
-                                  financial calculation          respond_to_user
-                                           |                    /       |       \
-                                           v              clarification scope  capabilities
-                                 Zod tool validation                     |       |
-                                           |                             v       v
-                              Prisma product lookup              backend-owned text
-                                  (when requested)                       |
-                                           |                             |
-                                           v                             |
-                               Decimal.js formula                        |
-                                           |                             |
-                                           v                             |
-                              verified tool output                       |
-                                           |                             |
-                                           v                             |
-                                OpenAI explanation                       |
-                                            \                           /
-                                             v                         v
+                                             /             |             \
+                            financial calculation  calculation summary  respond_to_user
+                                     |                    |              |
+                                     v                    v              v
+                           Zod tool validation     Prisma aggregation  classified reply
+                                     |                    |              |
+                                     v                    |              |
+                          product lookup/formula           |      backend-owned text
+                                     |                    |              |
+                                     v                    v              |
+                              verified tool output -> OpenAI explanation |
+                                             \                           /
+                                              v                         v
                                       transactional persistence -> validated API response
 ```
 
@@ -103,12 +98,13 @@ npm run db:studio    # inspect local data
 
 The API uses the official `openai` package and calls the Responses API directly. The default model is `gpt-4o-mini`, configurable through `OPENAI_MODEL`. Provider-side response storage is disabled, and conversation context is loaded from SQLite with a configurable maximum length.
 
-Every turn uses `tool_choice: "required"`, `parallel_tool_calls: false`, and one of three strict native functions:
+Every turn uses `tool_choice: "required"`, `parallel_tool_calls: false`, and one of four strict native functions. The tool choice itself is the intent classifier; there is no brittle keyword router and no manual parsing of model prose:
 
 | Tool | Purpose | Backend behavior |
 |---|---|---|
 | `calculate_compound_interest` | Extract a complete compound-interest request | Zod validation followed by the trusted formula |
 | `calculate_loan_payment` | Extract an explicit-rate or stored-product loan request | Zod validation, optional Prisma lookup, then the trusted formula |
+| `get_calculation_summary` | Classify a request for calculation totals or usage | Zod validation followed by a Prisma aggregate over persisted calculation rows |
 | `respond_to_user` | Classify a non-calculation turn | Returns an in-scope response or a backend-owned scope/capability message |
 
 `respond_to_user` accepts only these categories:
@@ -120,11 +116,14 @@ FORMULAS
 SUPPORTED_EDUCATION
 MISSING_PARAMETERS
 OUT_OF_SCOPE
+SCOPE_CHALLENGE
 ```
 
-For `CAPABILITIES`, `FORMULAS`, and `OUT_OF_SCOPE`, model-written text is discarded. The backend substitutes a reviewed response, preventing an unrelated or inaccurate draft from reaching the user. Formula questions—including ambiguous follow-ups such as “What formula are you using for its calculations?”—receive both exact equations and their variable definitions. If OpenAI returns no function call, multiple function calls, malformed arguments, or an empty reply, the gateway fails closed.
+For `CAPABILITIES`, `FORMULAS`, `OUT_OF_SCOPE`, and `SCOPE_CHALLENGE`, model-written text is discarded. The backend substitutes a reviewed response, preventing an unrelated or inaccurate draft from reaching the user. Formula questions—including ambiguous follow-ups such as “What formula are you using for its calculations?”—receive both exact equations and their variable definitions. If a user points out that FinGuide answered an unsupported topic earlier, `SCOPE_CHALLENGE` acknowledges the inconsistency without reopening that topic. If OpenAI returns no function call, multiple function calls, malformed arguments, or an empty reply, the gateway fails closed.
 
 For a completed calculation, the model's native function arguments are decoded and treated as untrusted input. The backend validates and executes them, then sends the verified result back as `function_call_output`. A second model call explains only that supplied result. The API also returns the calculation as a separate structured object, so the UI never needs to parse numeric truth from generated prose.
+
+Calculation-history questions use the same grounded loop. For example, “How many calculations have you made total for me?” selects `get_calculation_summary` with `ALL_CONVERSATIONS`; “How many in this chat?” selects `CURRENT_CONVERSATION`. Prisma counts the stored `Calculation` rows and groups them by type. The model only explains those verified counts, and the response uses `calculation: null` because no new financial calculation was performed.
 
 Example out-of-scope behavior:
 
@@ -282,13 +281,13 @@ Latest verified quality baseline:
 |---|---:|
 | ESLint | Passed |
 | Strict TypeScript | Passed |
-| API tests | 25 passed |
+| API tests | 28 passed |
 | Web tests | 5 passed |
-| Total tests | 30 passed |
+| Total tests | 33 passed |
 | API production build | Passed |
 | Web production build | Passed |
 
-Tests cover formulas, numeric bounds, zero-interest loans, stored product grounding, unknown products, conflicting rate sources, native OpenAI tool orchestration, formula-question routing, fail-closed behavior, SQL-scope leakage, HTTP validation/security headers, conversation persistence, assistant formatting, and UI session restoration.
+Tests cover formulas, numeric bounds, zero-interest loans, stored product grounding, unknown products, conflicting rate sources, native OpenAI tool orchestration, calculation-summary intent and persistence, formula-question routing, contextual scope challenges, fail-closed behavior, SQL-scope leakage, HTTP validation/security headers, conversation persistence, assistant formatting, and UI session restoration.
 
 ## Assumptions and limitations
 

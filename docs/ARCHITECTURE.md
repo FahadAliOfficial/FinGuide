@@ -31,7 +31,7 @@ Client        HTTP/API       Orchestrator       OpenAI        Product DB     Fin
 
 For complete supported requests, the second model call receives the backend result as a tool output. The system prompt prohibits recomputation or changed figures. The API also returns the structured backend calculation alongside prose, so consumers never need to parse the model's text.
 
-Every turn uses `tool_choice: required` and must select exactly one strict native function. Complete calculations select one of the two financial tools. Other turns select `respond_to_user` with a constrained category for greetings, capabilities, formula questions, supported education, missing-parameter clarification, or out-of-scope input. Capability, formula, and out-of-scope text is owned by the backend; any model-drafted content for those categories is discarded. These turns are persisted as ordinary assistant messages and return `calculation: null`; they never create a calculation audit row. A numeric financial result still requires a financial tool and the verified formula path.
+Every turn uses `tool_choice: required` and must select exactly one strict native function. Complete calculations select one of the two financial tools. Questions about stored calculation totals select `get_calculation_summary`, with a model-selected but backend-validated scope of the current conversation or all conversations. Other turns select `respond_to_user` with a constrained category for greetings, capabilities, formula questions, supported education, missing-parameter clarification, out-of-scope input, or a challenge to a previous scope response. Capability, formula, out-of-scope, and scope-challenge text is owned by the backend; any model-drafted content for those categories is discarded. A scope challenge acknowledges that an earlier answer was inconsistent without resuming the unsupported topic. Conversational and summary turns are persisted as ordinary assistant messages and return `calculation: null`; they never create a calculation audit row. A numeric financial result still requires a financial tool and the verified formula path.
 
 ## Components
 
@@ -45,7 +45,7 @@ Dependencies point inward. The orchestrator depends on interfaces, allowing dete
 
 ## OpenAI integration
 
-The model receives three strict function schemas: two financial operations and one conversational-control operation. `strict: true` constrains tool arguments; Zod still validates at the trust boundary because model output is untrusted external input. The tool executor uses a fixed name-to-handler map—never `eval`, dynamic imports, or arbitrary dispatch. Required tool selection fails closed when no function call is returned. The OpenAI key remains in the API process.
+The model receives four strict function schemas: two financial operations, one read-only calculation-summary operation, and one conversational-control operation. Native tool selection is the semantic intent classifier; application behavior is not routed by a phrase list. `strict: true` constrains tool arguments; Zod still validates at the trust boundary because model output is untrusted external input. The orchestrator uses fixed allow-listed dispatch—never `eval`, dynamic imports, arbitrary SQL, or arbitrary tool names. Summary queries use Prisma aggregation over stored `Calculation` rows, and the verified counts are returned to the model only for explanation. Required tool selection fails closed when no function call is returned. The OpenAI key remains in the API process.
 
 Conversation context is read from our database and bounded by count and message length. We do not depend on provider-side conversation retention. This keeps data ownership and replay behavior explicit.
 
@@ -64,7 +64,7 @@ The client obtains recent sessions from `GET /api/v1/conversations` and loads a 
 
 | Risk | Control |
 |---|---|
-| Prompt injection / arbitrary action | Two allow-listed financial tools plus one non-executing conversational-control tool; no general network/database tool; server validates every argument |
+| Prompt injection / arbitrary action | Two allow-listed financial tools, one fixed read-only aggregate, and one non-executing conversational-control tool; no general network/database tool; server validates every argument |
 | Out-of-scope answer leakage | Required conversational classification; backend replaces capability and out-of-scope drafts with deterministic responses |
 | LLM arithmetic hallucination | Pure backend formulas; structured result returned separately; explanation prompt receives verified output |
 | Secret exposure | Server-only environment validation; redacted logs; generic production errors |

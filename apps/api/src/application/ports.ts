@@ -16,6 +16,18 @@ export interface VerifiedCalculation extends CalculationResponse {
   productId: string | null;
 }
 
+export type CalculationSummaryScope = 'CURRENT_CONVERSATION' | 'ALL_CONVERSATIONS';
+
+export interface VerifiedCalculationSummary {
+  kind: 'CALCULATION_SUMMARY';
+  scope: CalculationSummaryScope;
+  total: number;
+  compoundInterest: number;
+  loanPayments: number;
+}
+
+export type VerifiedToolResult = VerifiedCalculation | VerifiedCalculationSummary;
+
 export type LlmCompletion =
   | { kind: 'calculation'; explanation: string; calculation: VerifiedCalculation }
   | { kind: 'conversation'; explanation: string; calculation: null };
@@ -23,7 +35,7 @@ export type LlmCompletion =
 export interface LlmGateway {
   completeCalculation(
     history: ChatHistoryItem[],
-    execute: (call: ModelToolCall) => Promise<VerifiedCalculation>
+    execute: (call: ModelToolCall) => Promise<VerifiedToolResult>
   ): Promise<LlmCompletion>;
 }
 
@@ -59,4 +71,5 @@ export interface ConversationRepository {
   appendAssistantError(conversationId: string, content: string): Promise<void>;
   getMessages(conversationId: string): Promise<StoredMessage[]>;
   listConversations(limit: number): Promise<ConversationSummary[]>;
+  getCalculationSummary(conversationId: string, scope: CalculationSummaryScope): Promise<VerifiedCalculationSummary>;
 }

@@ -139,6 +139,77 @@ describe('OpenAI tool loop', () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
+  it('acknowledges a prior out-of-scope answer without reopening the topic', async () => {
+    const create = vi.fn().mockResolvedValueOnce({
+      output: [{
+        type: 'function_call', call_id: 'call-6', name: 'respond_to_user',
+        arguments: '{"category":"SCOPE_CHALLENGE","message":"Here are parameterized-query examples."}'
+      }],
+      output_text: ''
+    });
+    const client = { responses: { create } } as unknown as OpenAI;
+    const gateway = new OpenAiGateway('test-key', 'test-model', 1_000, 0, client);
+    const execute = vi.fn();
+
+    const result = await gateway.completeCalculation([
+      { role: 'USER', content: 'but i want to know about parameterized queries' },
+      { role: 'ASSISTANT', content: 'I’m focused on financial calculations.' },
+      { role: 'USER', content: 'but you have already answered me one' }
+    ], execute);
+
+    expect(result.explanation).toContain('earlier response may have discussed that topic');
+    expect(result.explanation).toContain('outside FinGuide’s intended scope');
+    expect(result.explanation).not.toContain('parameterized-query examples');
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('classifies calculation-count questions as a backend summary tool call', async () => {
+    const create = vi.fn()
+      .mockResolvedValueOnce({
+        output: [{
+          type: 'function_call', call_id: 'call-7', name: toolNames.calculationSummary,
+          arguments: '{"scope":"ALL_CONVERSATIONS"}'
+        }],
+        output_text: ''
+      })
+      .mockResolvedValueOnce({
+        output: [],
+        output_text: 'I have completed 4 calculations for you: 2 compound-interest calculations and 2 loan-payment calculations.'
+      });
+    const client = { responses: { create } } as unknown as OpenAI;
+    const gateway = new OpenAiGateway('test-key', 'test-model', 1_000, 0, client);
+    const execute = vi.fn().mockResolvedValue({
+      kind: 'CALCULATION_SUMMARY',
+      scope: 'ALL_CONVERSATIONS',
+      total: 4,
+      compoundInterest: 2,
+      loanPayments: 2
+    });
+
+    const result = await gateway.completeCalculation(
+      [{ role: 'USER', content: 'can you tell me how many calculations have you made total for me?' }],
+      execute
+    );
+
+    expect(execute).toHaveBeenCalledWith({
+      name: toolNames.calculationSummary,
+      arguments: { scope: 'ALL_CONVERSATIONS' }
+    });
+    expect(result).toEqual({
+      kind: 'conversation',
+      explanation: 'I have completed 4 calculations for you: 2 compound-interest calculations and 2 loan-payment calculations.',
+      calculation: null
+    });
+    expect(create).toHaveBeenCalledTimes(2);
+    const explanationRequest = create.mock.calls[1]?.[0] as unknown as {
+      instructions: string;
+      input: Array<{ type?: string; output?: string }>;
+    };
+    expect(explanationRequest.instructions).toContain('backend-verified calculation counts');
+    const toolOutput = explanationRequest.input.find((item) => item.type === 'function_call_output')?.output;
+    expect(toolOutput ? JSON.parse(toolOutput) : null).toMatchObject({ total: 4, scope: 'ALL_CONVERSATIONS' });
+  });
+
   it('fails closed when the required native tool call is missing', async () => {
     const create = vi.fn().mockResolvedValueOnce({
       output: [{ type: 'message', role: 'assistant', content: [] }],

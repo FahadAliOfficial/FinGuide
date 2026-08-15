@@ -9,7 +9,8 @@ import type { ModelToolCall, ProductRepository, VerifiedCalculation } from './po
 
 export const toolNames = {
   compoundInterest: 'calculate_compound_interest',
-  loanPayment: 'calculate_loan_payment'
+  loanPayment: 'calculate_loan_payment',
+  calculationSummary: 'get_calculation_summary'
 } as const;
 
 export class FinancialToolExecutor {

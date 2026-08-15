@@ -2,12 +2,14 @@ import OpenAI from 'openai';
 import type { ResponseInput, Tool } from 'openai/resources/responses/responses';
 import { z } from 'zod';
 import { UpstreamError } from '../domain/errors.js';
-import type { ChatHistoryItem, LlmCompletion, LlmGateway, ModelToolCall, VerifiedCalculation } from '../application/ports.js';
+import type { ChatHistoryItem, LlmCompletion, LlmGateway, ModelToolCall, VerifiedCalculationSummary, VerifiedToolResult } from '../application/ports.js';
 import { toolNames } from '../application/tool-executor.js';
 
 const conversationalToolName = 'respond_to_user';
+const isCalculationSummary = (result: VerifiedToolResult): result is VerifiedCalculationSummary =>
+  'kind' in result && result.kind === 'CALCULATION_SUMMARY';
 const conversationalResponseSchema = z.object({
-  category: z.enum(['GREETING_OR_THANKS', 'CAPABILITIES', 'FORMULAS', 'SUPPORTED_EDUCATION', 'MISSING_PARAMETERS', 'OUT_OF_SCOPE']),
+  category: z.enum(['GREETING_OR_THANKS', 'CAPABILITIES', 'FORMULAS', 'SUPPORTED_EDUCATION', 'MISSING_PARAMETERS', 'OUT_OF_SCOPE', 'SCOPE_CHALLENGE']),
   message: z.string().max(2_000)
 }).strict();
 
@@ -15,6 +17,7 @@ const capabilityReply = `I can help with two backend-verified financial calculat
 
 1. **Compound interest** — future value from a principal, annual rate, duration, and compounding frequency.
 2. **Monthly loan payment** — payment from a principal, annual rate or stored loan product, and loan term.
+3. **Calculation history** — backend-verified totals for this conversation or across stored sessions.
 
 Try: “Calculate the monthly payment for a $300,000 Home Loan over 30 years using the stored rate.”`;
 
@@ -38,7 +41,29 @@ const outOfScopeReply = `I’m focused on compound-interest and monthly loan-pay
 
 Try: “What will $10,000 become after 5 years at 8% annual interest?”`;
 
+const scopeChallengeReply = `You’re right—an earlier response may have discussed that topic, but it was outside FinGuide’s intended scope.
+
+To keep this assistant focused and reliable, I can only help with compound interest and monthly loan payments.`;
+
 const tools: Tool[] = [
+  {
+    type: 'function',
+    name: toolNames.calculationSummary,
+    description: 'Retrieve backend-verified counts of completed calculations. Use for questions about how many calculations were made, calculation usage, or a breakdown by supported calculation type.',
+    strict: true,
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        scope: {
+          type: 'string',
+          enum: ['CURRENT_CONVERSATION', 'ALL_CONVERSATIONS'],
+          description: 'Use CURRENT_CONVERSATION for this chat/session; use ALL_CONVERSATIONS for total, overall, all-time, or "for me" requests.'
+        }
+      },
+      required: ['scope']
+    }
+  },
   {
     type: 'function',
     name: toolNames.compoundInterest,
@@ -84,12 +109,12 @@ const tools: Tool[] = [
       properties: {
         category: {
           type: 'string',
-          enum: ['GREETING_OR_THANKS', 'CAPABILITIES', 'FORMULAS', 'SUPPORTED_EDUCATION', 'MISSING_PARAMETERS', 'OUT_OF_SCOPE'],
+          enum: ['GREETING_OR_THANKS', 'CAPABILITIES', 'FORMULAS', 'SUPPORTED_EDUCATION', 'MISSING_PARAMETERS', 'OUT_OF_SCOPE', 'SCOPE_CHALLENGE'],
           description: 'Why no financial calculation should run'
         },
         message: {
           type: 'string',
-          description: 'A concise reply. For OUT_OF_SCOPE, CAPABILITIES, and FORMULAS this value is ignored and replaced by a backend-owned response.'
+          description: 'A concise reply. For OUT_OF_SCOPE, SCOPE_CHALLENGE, CAPABILITIES, and FORMULAS this value is ignored and replaced by a backend-owned response.'
         }
       },
       required: ['category', 'message']
@@ -101,9 +126,11 @@ const instructions = `You are FinGuide, a focused conversational financial calcu
 Understand the user's natural-language intent before deciding which supplied function to call.
 Every turn MUST call exactly one supplied function; never answer directly.
 For a supported calculation with sufficient values, call the matching calculation function.
+For questions about the number of completed calculations, calculation usage, past calculation totals, or a breakdown by calculation type, call get_calculation_summary. This is supported application functionality, not OUT_OF_SCOPE. Use ALL_CONVERSATIONS for words such as total, overall, all time, across sessions, or "for me"; use CURRENT_CONVERSATION when the user says this chat, this conversation, or this session.
 Use respond_to_user for greetings, thanks, capability questions, supported financial education, or a supported calculation missing required values.
 When values are missing, use category MISSING_PARAMETERS and ask only for the missing information.
 Use category OUT_OF_SCOPE for every request that is not directly about compound interest or monthly amortized loan payments. This includes programming, SQL, SQL injection, cybersecurity, code, medical, legal, politics, general knowledge, and unrelated financial advice. Do not answer or explain the requested topic; the backend will provide the scope response.
+If the user challenges that boundary, refers to an earlier out-of-scope answer, or asks why FinGuide previously answered, use category SCOPE_CHALLENGE. Examples include “but you already answered me”, “you told me before”, and “why won’t you answer?”. Do not resume the unsupported topic.
 For capability questions, use category CAPABILITIES; the backend will provide the supported feature list.
 For questions about formulas, equations, calculation methods, or how a result was calculated, use category FORMULAS; the backend will provide the exact formulas. Examples include “What formulas do you use?”, “What’s the formula you are using for its calculations?”, and “How did you calculate that result?”.
 Never calculate or state a numeric financial result yourself.
@@ -122,7 +149,7 @@ export class OpenAiGateway implements LlmGateway {
 
   async completeCalculation(
     history: ChatHistoryItem[],
-    execute: (call: ModelToolCall) => Promise<VerifiedCalculation>
+    execute: (call: ModelToolCall) => Promise<VerifiedToolResult>
   ): Promise<LlmCompletion> {
     const input: ResponseInput = history.map((message) => ({
       role: message.role === 'USER' ? 'user' : 'assistant',
@@ -160,6 +187,8 @@ export class OpenAiGateway implements LlmGateway {
         }
         const reply = parsed.data.category === 'OUT_OF_SCOPE'
           ? outOfScopeReply
+          : parsed.data.category === 'SCOPE_CHALLENGE'
+            ? scopeChallengeReply
           : parsed.data.category === 'CAPABILITIES'
             ? capabilityReply
             : parsed.data.category === 'FORMULAS'
@@ -169,17 +198,20 @@ export class OpenAiGateway implements LlmGateway {
         return { kind: 'conversation', explanation: reply, calculation: null };
       }
 
-      const calculation = await execute({ name: functionCall.name, arguments: argumentsValue });
+      const verifiedResult = await execute({ name: functionCall.name, arguments: argumentsValue });
+      const isSummary = isCalculationSummary(verifiedResult);
       const explanation = await this.client.responses.create({
         model: this.model,
-        instructions: `Explain the verified tool result clearly and concisely. Use exactly the supplied figures; do not recalculate or change them. Mention any annual-compounding default and named product rate. End with: "This is an estimate, not financial advice."`,
+        instructions: isSummary
+          ? 'Explain the backend-verified calculation counts clearly and concisely. Use exactly the supplied counts and scope. Do not invent calculations or financial results.'
+          : `Explain the verified tool result clearly and concisely. Use exactly the supplied figures; do not recalculate or change them. Mention any annual-compounding default and named product rate. End with: "This is an estimate, not financial advice."`,
         input: [
           ...input,
           ...planned.output,
           {
             type: 'function_call_output',
             call_id: functionCall.call_id,
-            output: JSON.stringify(calculation)
+            output: JSON.stringify(verifiedResult)
           }
         ],
         tools,
@@ -189,7 +221,10 @@ export class OpenAiGateway implements LlmGateway {
 
       const text = explanation.output_text.trim();
       if (!text) throw new UpstreamError('The AI service returned an empty explanation.');
-      return { kind: 'calculation', explanation: text, calculation };
+      if (isCalculationSummary(verifiedResult)) {
+        return { kind: 'conversation', explanation: text, calculation: null };
+      }
+      return { kind: 'calculation', explanation: text, calculation: verifiedResult };
     } catch (error) {
       if (error instanceof UpstreamError) throw error;
       if (error instanceof OpenAI.APIError) {
