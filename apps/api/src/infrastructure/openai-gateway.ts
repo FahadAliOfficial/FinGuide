@@ -149,7 +149,8 @@ export class OpenAiGateway implements LlmGateway {
 
   async completeCalculation(
     history: ChatHistoryItem[],
-    execute: (call: ModelToolCall) => Promise<VerifiedToolResult>
+    execute: (call: ModelToolCall) => Promise<VerifiedToolResult>,
+    onToolSelected?: (toolName: string) => void
   ): Promise<LlmCompletion> {
     const input: ResponseInput = history.map((message) => ({
       role: message.role === 'USER' ? 'user' : 'assistant',
@@ -173,6 +174,7 @@ export class OpenAiGateway implements LlmGateway {
 
       const functionCall = functionCalls[0];
       if (!functionCall) throw new UpstreamError('The AI service did not select an operation.');
+      onToolSelected?.(functionCall.name);
       let argumentsValue: unknown;
       try {
         argumentsValue = JSON.parse(functionCall.arguments) as unknown;

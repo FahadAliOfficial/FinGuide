@@ -54,7 +54,7 @@ apps/
       application/          Use cases, ports, and tool dispatch
       config/               Validated environment configuration
       domain/               Pure formulas and application errors
-      infrastructure/       OpenAI and Prisma adapters
+      infrastructure/       OpenAI, Prisma, and structured logging adapters
       middleware/           Request IDs and safe error handling
       routes/               Versioned REST routes
   web/
@@ -270,11 +270,34 @@ Runtime controls include:
 - Prisma parameterized queries and exact normalized product matching
 - OpenAI timeout and retry limits
 - Per-request correlation IDs returned as `X-Request-Id`
-- Structured Pino logs with authorization and cookie redaction
+- Structured Pino logs with request-correlated lifecycle events and secret redaction
 - Safe error envelopes without stack traces
 - Graceful `SIGINT`/`SIGTERM` shutdown and Prisma disconnection
 
 An unknown stored product becomes a `404 NOT_FOUND` application error. The triggering turn and a safe assistant error are retained in conversation history, while no calculation record or explanation call is created.
+
+### Diagnostic logging
+
+The API uses one shared Pino logger configured in `infrastructure/logger.ts`. Logs are newline-delimited JSON for ingestion by local tooling or a centralized log platform. The same validated `X-Request-Id` is used in the HTTP response and all related application events, allowing one failed request to be traced across layers.
+
+Important events include:
+
+```text
+server.started
+chat.accepted
+llm.tool_selected
+chat.completed
+chat.failed
+chat.error_persistence_failed
+http.validation_failed
+http.rate_limited
+http.unexpected_error
+server.shutdown_completed
+```
+
+Successful completion logs include duration, outcome, calculation type, and formula version. Expected client failures are warnings; unexpected and upstream failures are errors with server-side stack context. If writing the safe assistant error also fails, that secondary failure receives its own diagnostic event rather than being silently discarded.
+
+Chat content and tool arguments are deliberately excluded from application event fields. Authorization headers, cookies, API-key-shaped fields, and OpenAI key fields are redacted. `LOG_LEVEL` controls verbosity, while API responses continue to expose only safe messages and the correlation ID.
 
 ## Configuration
 
@@ -310,13 +333,13 @@ Latest verified quality baseline:
 |---|---:|
 | ESLint | Passed |
 | Strict TypeScript | Passed |
-| API tests | 28 passed |
+| API tests | 34 passed |
 | Web tests | 5 passed |
-| Total tests | 33 passed |
+| Total tests | 39 passed |
 | API production build | Passed |
 | Web production build | Passed |
 
-Tests cover formulas, numeric bounds, zero-interest loans, stored product grounding, unknown products, conflicting rate sources, native OpenAI tool orchestration, calculation-summary intent and persistence, formula-question routing, contextual scope challenges, fail-closed behavior, SQL-scope leakage, HTTP validation/security headers, conversation persistence, assistant formatting, and UI session restoration.
+Tests cover formulas, numeric bounds, zero-interest loans, stored product grounding, unknown products, conflicting rate sources, native OpenAI tool orchestration, calculation-summary intent and persistence, formula-question routing, contextual scope challenges, fail-closed behavior, SQL-scope leakage, HTTP validation/security headers, conversation persistence, request correlation, diagnostic severity, secret redaction, secondary persistence failures, assistant formatting, and UI session restoration.
 
 ## Assumptions and limitations
 

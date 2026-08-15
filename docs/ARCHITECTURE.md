@@ -37,7 +37,7 @@ Every turn uses `tool_choice: required` and must select exactly one strict nativ
 
 - `domain`: pure formulas, typed values, and errors. No HTTP, OpenAI, or Prisma imports.
 - `application`: the chat use case, conversational/calculation outcome handling, ports, validated command execution, and persistence coordination.
-- `infrastructure`: Prisma repositories and the OpenAI Responses API adapter.
+- `infrastructure`: Prisma repositories, the OpenAI Responses API adapter, and shared structured logger.
 - `routes` / `middleware`: transport validation, rate limits, security headers, request IDs, and safe error mapping.
 - `web`: a small accessible React chat client; it has no API key or finance logic.
 
@@ -77,7 +77,7 @@ The client obtains recent sessions from `GET /api/v1/conversations` and loads a 
 
 ## Reliability and observability
 
-Every request gets an `X-Request-Id`. Logs are structured, secrets and authorization headers are redacted, and errors use stable codes. Health checks are cheap and model-independent. OpenAI calls have bounded timeouts and retries. The client prevents duplicate submits and exposes retry-friendly errors.
+Every request gets an `X-Request-Id`, and the same value correlates the HTTP log with `chat.accepted`, `llm.tool_selected`, `chat.completed`, and failure events. One shared Pino instance emits newline-delimited JSON without chat content or tool arguments. Authorization headers, cookies, and API-key fields are redacted. Expected client failures log at warning level; upstream and unexpected failures retain stack context in server-side error logs while API responses use stable safe codes. Failure to persist a safe assistant error is logged separately instead of being swallowed. Health checks are cheap and model-independent. OpenAI calls have bounded timeouts and retries. The client prevents duplicate submits and exposes retry-friendly errors.
 
 ## Scaling path
 

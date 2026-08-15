@@ -9,7 +9,7 @@ export function createChatRouter(service: ChatService): Router {
 
   router.post('/chat', async (request, response) => {
     const input = chatRequestSchema.parse(request.body);
-    const result = await service.send(input.message, input.conversationId);
+    const result = await service.send(input.message, input.conversationId, response.locals.requestId as string);
     response.status(200).json(result);
   });
 

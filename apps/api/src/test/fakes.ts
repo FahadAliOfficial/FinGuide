@@ -80,7 +80,12 @@ export class InMemoryConversations implements ConversationRepository {
 
 export class FakeLlm implements LlmGateway {
   constructor(private readonly call: ModelToolCall, private readonly explanation = 'The verified result is shown below. This is an estimate, not financial advice.') {}
-  async completeCalculation(_history: ChatHistoryItem[], execute: (call: ModelToolCall) => Promise<VerifiedToolResult>) {
+  async completeCalculation(
+    _history: ChatHistoryItem[],
+    execute: (call: ModelToolCall) => Promise<VerifiedToolResult>,
+    onToolSelected?: (toolName: string) => void
+  ) {
+    onToolSelected?.(this.call.name);
     const result = await execute(this.call);
     if ('kind' in result) throw new Error('FakeLlm expected a financial calculation');
     return { kind: 'calculation' as const, explanation: this.explanation, calculation: result };
@@ -89,7 +94,12 @@ export class FakeLlm implements LlmGateway {
 
 export class FakeConversationalLlm implements LlmGateway {
   constructor(private readonly reply: string) {}
-  async completeCalculation() {
+  async completeCalculation(
+    _history: ChatHistoryItem[],
+    _execute: (call: ModelToolCall) => Promise<VerifiedToolResult>,
+    onToolSelected?: (toolName: string) => void
+  ) {
+    onToolSelected?.('respond_to_user');
     return { kind: 'conversation' as const, explanation: this.reply, calculation: null };
   }
 }
@@ -98,8 +108,10 @@ export class FakeSummaryLlm implements LlmGateway {
   constructor(private readonly scope: CalculationSummaryScope) {}
   async completeCalculation(
     _history: ChatHistoryItem[],
-    execute: (call: ModelToolCall) => Promise<VerifiedToolResult>
+    execute: (call: ModelToolCall) => Promise<VerifiedToolResult>,
+    onToolSelected?: (toolName: string) => void
   ) {
+    onToolSelected?.('get_calculation_summary');
     const result = await execute({ name: 'get_calculation_summary', arguments: { scope: this.scope } });
     if (!('kind' in result)) throw new Error('FakeSummaryLlm expected a calculation summary');
     return {
