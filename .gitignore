@@ -1,7 +1,5 @@
 node_modules/
 dist/
-.env
-.env.*
 !.env.example
 *.db
 *.db-journal
@@ -12,8 +10,11 @@ dist/
 coverage/
 .vite/
 .idea/
-.vscode/
 .DS_Store
 Thumbs.db
 npm-debug.log*
 MEMORY.md
+branch_structure.json
+temp_auto_push.bat
+temp_interactive_push.bat
+config.bat

@@ -325,7 +325,7 @@ At startup, the container applies committed Prisma migrations, runs the idempote
 
 ## CI
 
-`.github/workflows/ci.yml` installs from the lockfile, generates Prisma Client, and runs lint, type checks, tests, and production builds.
+`.github/workflows/ci.yml` installs from the lockfile, generates Prisma Client, and runs lint, type checks, tests, and production builds. The root `prelint` hook builds the shared contracts workspace first, so type-aware ESLint resolves `@finguide/contracts` correctly on a clean checkout as well as an already-built local workspace.
 
 Latest verified quality baseline:
 
